@@ -1,4 +1,9 @@
-
+# 
+#gpx_file <- "draveurs.gpx"
+#my_layer <- "track_points" 
+gpx_file <- "route4636025-Untitled_route.gpx"
+my_layer <- "route_points" 
+elevation_raster_zoom <- 10
 # librairies ----
 
 library(sf) #pour manipulation des données géospatiales
@@ -20,7 +25,7 @@ library(KUD3D) # pour add_points
 library(sf)
 library(tidyverse)
 library(osmdata) # pour osm_elevation
-
+library(magick) # to rotate png overlay
 # functions by Will Bishop @wcmbishop ----
 # https://wcmbishop.github.io/rayshader-demo/ 
 #' Download a map image from the ArcGIS REST API
@@ -282,13 +287,19 @@ prj <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
 ## importer le GPX avec sf:st_read, rgdal::readOGR ou plotKML::readGPX 
 # perd les datetime  des points. J'ai oublié où j'ai lu ça, mais apparemment 
 # c'est normal car les shapefile ont juste la date.  Faisons le quand même.
-st_layers("route4636025-Untitled_route.gpx")     
-everest_gpx <- st_read("route4636025-Untitled_route.gpx", layer = "route_points") %>% st_transform(., "+proj=longlat +datum=WGS84") 
+st_layers(gpx_file)     
+everest_gpx <- st_read(gpx_file, layer = my_layer) %>% st_transform(., "+proj=longlat +datum=WGS84") 
 bbox <- st_bbox(everest_gpx)
 bbox["xmin"] <- bbox$xmin - 0.1   # add buffer around path
 bbox["xmax"] <- bbox$xmax + 0.1
 bbox["ymin"] <- bbox$ymin - 0.07
 bbox["ymax"] <- bbox$ymax + 0.07
+
+# bbox["xmin"] <- bbox$xmin - 0.1   # add buffer around path
+# bbox["xmax"] <- bbox$xmax + 0.1
+# bbox["ymin"] <- bbox$ymin - 0.1
+# bbox["ymax"] <- bbox$ymax + 0.1
+
 
 mapview(everest_gpx)
 
@@ -304,7 +315,8 @@ ex.df <- data.frame(x=seq(from=bbox$xmin , to=bbox$xmax, length.out=100),
 
 
 # Use elevatr package to get elevation data for each point.
-elev <- get_elev_raster(ex.df, prj = prj, z = 10, clip = "bbox")
+#elev <- get_elev_raster(ex.df, prj = prj, z = 10, clip = "bbox")
+elev <- get_elev_raster(ex.df, prj = prj, z = elevation_raster_zoom, clip = "bbox")
 
 #elev_utm <- projectRaster(elev, crs=crs_utm)
 
@@ -368,9 +380,18 @@ bbox2 <- list(
 
 overlay_file <- "images.png"
 get_arcgis_map_image(bbox2, map_type = "World_Imagery", file = overlay_file,
-                     width = dim(elev)[1], height = dim(elev)[2], 
+                     width = dim(elev)[2], height = dim(elev)[1], 
                      sr_bbox = 4326)
-overlay_img <- png::readPNG(overlay_file)
+
+
+image_write(image_rotate(image_read(overlay_file), 90) ,"rotated.png")
+
+
+#overlay_img <- png::readPNG(overlay_file)
+overlay_img <- png::readPNG("rotated.png")
+
+
+
 # rayshader de l'everest, because we can ----
 
 # elmat = matrix(raster::extract(elev,
@@ -387,29 +408,31 @@ elmat <-
   apply(., 2, rev)
 
 
-shadow = ray_shade(elmat,zscale=50,lambert=FALSE)
-ambient = ambient_shade(elmat,zscale=50)
+myzscale = 50000 / (elevation_raster_zoom * elevation_raster_zoom * elevation_raster_zoom)
+shadow = ray_shade(elmat,zscale=myzscale,lambert=FALSE)
+ambient = ambient_shade(elmat,zscale=myzscale)
 
 
 # plot_3d
 # sphere_shade retourne RGB array of hillshaded texture mappings.
-sphere_shade(heightmap = elmat, zscale=50,texture = "imhof4") %>% 
+sphere_shade(heightmap = elmat, zscale=myzscale,texture = "imhof4") %>% 
   add_shadow(shadow) %>%
   add_shadow(ambient)  %>% 
-  add_overlay(., overlay = overlay_img, alphalayer = 0.5)  %>%
+  #add_water(detect_water(elmat)) %>%
+  add_overlay(., overlay = overlay_img, alphacolor = NULL,alphalayer = 0.9)  %>%
   plot_3d(., heightmap = elmat,
-          zscale=50,fov=0,theta=90,phi=20,windowsize=c(1000,800),zoom=0.6,
+          zscale=myzscale,fov=0,theta=80,phi=29,windowsize=c(1000,800),zoom=0.6,
           water=FALSE,          baseshape = "circle" 
-          )
+  )
 
 
 # render labels
 # locaton founds by trial and error
-render_label(heightmap = elmat,x=363,y=281, z=8000,zscale=50,
+render_label(heightmap = elmat,x=363,y=281, z=1000,zscale=myzscale,
              text = "Base Camp",textsize = 2,linewidth = 5)
 
 
-render_label(heightmap = elmat,x=124,y=178, z=8000,zscale=50,
+render_label(heightmap = elmat,x=124,y=178, z=1000,zscale=myzscale,
              text = "Summit",textsize = 2,linewidth = 5)
 
 
@@ -417,35 +440,35 @@ render_label(heightmap = elmat,x=124,y=178, z=8000,zscale=50,
 add_points(
   ras = elev,
   det = kilian_path,
-  zscale = 50,
-  cont = c(95, 50),
+  zscale=myzscale,
+  cont = c(95, 5),
   alphavec = c(0.1, 0.9),
   drawpoints = T,
-  size = 1,
+  size = 3,
   col.pt = "black",
   colors = c("red","red")
 )  
 add_axes(elev,
-         zscale = 50,
+         zscale=myzscale,
          axis.col = grey(0.5))
 
-
+render_snapshot("trailmap")
 # gif !! ----
 
 
 # montery water gif ====
 elev_matrix <- elmat
-n_frames <- 72
-zscale <- 50
+n_frames <- 60
+zscale <- myzscale
 # frame transition variables
-thetavalues <- transition_values(from = 0, to = 360, steps = n_frames, 
+thetavalues <- transition_values(from = 80, to = 35, steps = n_frames, 
                                  one_way = TRUE, type = "lin")
 
-phivalues <- transition_values(from = 10, to = 70, steps = n_frames, 
-                         one_way = FALSE, type = "cos")
+phivalues <- transition_values(from = 28, to = 73, steps = n_frames, 
+                               one_way = FALSE, type = "cos")
 
-zoomvalues <- transition_values(from = 0.4, to = 0.8, steps = n_frames, 
-                          one_way = FALSE, type = "cos")
+zoomvalues <- transition_values(from = 0.6, to = 0.8, steps = n_frames, 
+                                one_way = FALSE, type = "cos")
 # shadow layers
 ambmat <- ambient_shade(elev_matrix, zscale = zscale)
 raymat <- ray_shade(elev_matrix, zscale = zscale, lambert = TRUE)
@@ -455,23 +478,24 @@ img_frames <- paste0("drain", seq_len(n_frames), ".png")
 for (i in seq_len(n_frames)) {
   message(paste(" - image", i, "of", n_frames))
   
-  sphere_shade(heightmap = elmat, zscale=50,texture = "imhof4") %>% 
+  sphere_shade(heightmap = elmat, zscale=myzscale,texture = "imhof4") %>% 
     add_shadow(shadow) %>%
     add_shadow(ambient)  %>% 
-    add_overlay(., overlay = overlay_img, alphalayer = 0.5)  %>%
+    #add_water(detect_water(elmat)) %>%
+    add_overlay(., overlay = overlay_img, alphacolor = NULL,alphalayer = 0.9)  %>%
     plot_3d(., heightmap = elmat,
-            zscale=50,fov=0,theta=thetavalues[i],phi=phivalues[i],windowsize=c(1000,800),zoom=zoomvalues[i],
+            zscale=myzscale,fov=0,theta=thetavalues[i],phi=phivalues[i],windowsize=c(1000,800),zoom=zoomvalues[i],
             water=FALSE,          baseshape = "circle" 
     )
   
   
   # render labels
   # locaton founds by trial and error
-  render_label(heightmap = elmat,x=363,y=281, z=8000,zscale=50,
+  render_label(heightmap = elmat,x=363,y=281, z=1000,zscale=myzscale,
                text = "Base Camp",textsize = 2,linewidth = 5)
   
   
-  render_label(heightmap = elmat,x=124,y=178, z=8000,zscale=50,
+  render_label(heightmap = elmat,x=124,y=178, z=1000,zscale=myzscale,
                text = "Summit",textsize = 2,linewidth = 5)
   
   
@@ -479,21 +503,19 @@ for (i in seq_len(n_frames)) {
   add_points(
     ras = elev,
     det = kilian_path,
-    zscale = 50,
-    cont = c(95, 50),
+    zscale=myzscale,
+    cont = c(95, 5),
     alphavec = c(0.1, 0.9),
     drawpoints = T,
-    size = 1,
+    size = 3,
     col.pt = "black",
     colors = c("red","red")
   )  
   add_axes(elev,
-           zscale = 50,
+           zscale=myzscale,
            axis.col = grey(0.5))
   
   
-  
-
   render_snapshot(img_frames[i])
   rgl::clear3d()
 }
@@ -501,4 +523,4 @@ for (i in seq_len(n_frames)) {
 # build gif
 magick::image_write_gif(magick::image_read(img_frames), 
                         path = "everest.gif", 
-                        delay = 3/n_frames)
+                        delay = 2/n_frames)
